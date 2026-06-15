@@ -57,6 +57,8 @@ PLAN_PRICES = {
     3: 189,
 }
 MIN_TOPUP_AMOUNT = 10
+REQUIRED_CHANNEL_ID = -1003669143923
+REQUIRED_CHANNEL_URL = "https://t.me/eseninvpnbot"
 
 IMAGES = {
     "hello": BASE_DIR / "hello.png",
@@ -448,6 +450,15 @@ def profile_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+def channel_subscription_keyboard() -> InlineKeyboardMarkup:
+    return keyboard(
+        [
+            [InlineKeyboardButton(text="Подписаться", url=REQUIRED_CHANNEL_URL)],
+            [button("✅ Я подписался", "check_channel_subscription")],
+        ]
+    )
+
+
 def buy_keyboard() -> InlineKeyboardMarkup:
     return buy_keyboard_with_promo()
 
@@ -587,6 +598,26 @@ async def show_menu(message: Message) -> None:
 
 async def show_agreement(message: Message) -> None:
     await send_photo(message, "agreement", "", agreement_keyboard())
+
+
+async def is_user_subscribed(bot: Bot, user_id: int) -> bool:
+    if is_admin(user_id):
+        return True
+    try:
+        member = await bot.get_chat_member(REQUIRED_CHANNEL_ID, user_id)
+    except Exception:
+        logging.exception("failed to check channel subscription for %s", user_id)
+        return False
+    return member.status not in {"left", "kicked"}
+
+
+async def show_channel_subscription(message: Message) -> None:
+    await send_photo(
+        message,
+        "hello",
+        "Для продолжения подпишитесь на наш канал",
+        channel_subscription_keyboard(),
+    )
 
 
 async def show_profile(message: Message, user_id: int) -> None:
@@ -1340,7 +1371,10 @@ async def start(message: Message) -> None:
         return
     remember_user(user.id, user.username)
     if user_accepted_terms(user.id):
-        await show_menu(message)
+        if await is_user_subscribed(message.bot, user.id):
+            await show_menu(message)
+        else:
+            await show_channel_subscription(message)
         return
     await show_agreement(message)
 
@@ -1531,6 +1565,9 @@ async def text_message(message: Message) -> None:
     if not user_accepted_terms(user.id):
         await show_agreement(message)
         return
+    if not await is_user_subscribed(message.bot, user.id):
+        await show_channel_subscription(message)
+        return
     if state == "awaiting_topup_amount":
         await handle_topup_amount_input(message, user.id)
         return
@@ -1623,13 +1660,31 @@ async def callback(query: CallbackQuery) -> None:
         remember_user(user.id, user.username, accepted_terms=True)
         await query.answer()
         await delete_message(message)
-        await show_menu(message)
+        if await is_user_subscribed(query.bot, user.id):
+            await show_menu(message)
+        else:
+            await show_channel_subscription(message)
         return
 
     if not user_accepted_terms(user.id):
         await query.answer()
         await delete_message(message)
         await show_agreement(message)
+        return
+
+    if data == "check_channel_subscription":
+        if await is_user_subscribed(query.bot, user.id):
+            await query.answer("Подписка подтверждена.")
+            await delete_message(message)
+            await show_menu(message)
+            return
+        await query.answer("Я пока не вижу подписку на канал.", show_alert=True)
+        return
+
+    if not await is_user_subscribed(query.bot, user.id):
+        await query.answer()
+        await delete_message(message)
+        await show_channel_subscription(message)
         return
 
     if data == "menu":
